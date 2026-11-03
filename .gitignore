@@ -1,0 +1,9 @@
+target/
+**/target/
+*.env
+.env*
+*.pem
+*credentials*
+neardev/
+# The released judge WASM is committed on purpose under judge/dist/ (it is
+# what OutLayer fetches by URL + sha256); everything else built stays out.

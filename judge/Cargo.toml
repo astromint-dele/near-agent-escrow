@@ -1,0 +1,39 @@
+[package]
+name = "escrow-judge"
+version = "0.1.0"
+edition = "2021"
+description = "OutLayer WASM judge for AgentEscrow: fetches the deliverable, checks its sha256 commitment, and asks a 3-model panel (Groq by default, NEAR AI Cloud with --features nearai) for per-criterion scores"
+license = "MIT"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "escrow-judge"
+path = "src/main.rs"
+
+[features]
+# Use NEAR AI Cloud instead of Groq as the model provider.
+nearai = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+# HTTP exists only inside the OutLayer TEE runtime (WASI P2); the pure logic in
+# lib.rs is unit-tested natively.
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi-http-client = "0.2"
+
+# Native-only, for examples/live_panel.rs (live check against NEAR AI Cloud).
+# native-tls uses Windows SChannel, so no C toolchain is needed.
+[target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
+ureq = { version = "2", default-features = false, features = ["json", "native-tls"] }
+native-tls = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1

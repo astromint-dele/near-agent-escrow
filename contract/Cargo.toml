@@ -1,0 +1,26 @@
+[package]
+name = "agent_escrow"
+version = "0.1.0"
+edition = "2021"
+description = "Escrow for AI-agent work: payment releases only when a TEE-attested AI judge panel scores the deliverable against an on-chain rubric"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+near-sdk = "5"
+serde_json = "1"
+escrow_core = { path = "../core" }
+
+# All decision logic lives in ../core and is unit-tested there. near-sdk's
+# unit-testing feature is not used: on Windows it needs a C toolchain for
+# aws-lc-sys. The NEAR glue is exercised end to end on testnet instead.
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
