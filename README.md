@@ -18,6 +18,30 @@ post_job (payment + rubric locked)
   -> one appeal (round 2, by the worker, within 24h) -> reclaim
 ```
 
+## Live on NEAR testnet
+
+The contract is deployed at [`verified-escrow-dev.testnet`](https://testnet.nearblocks.io/address/verified-escrow-dev.testnet).
+Judge v2 is pinned at `82ffd646...228f`.
+
+**Job #1 was judged in an OutLayer TEE and paid automatically.** No human approved the payout.
+
+| Step | Transaction |
+|---|---|
+| `post_job`: 0.5 NEAR deposit, 0.4625 NEAR locked as payment, pass mark 70 | [`4f4Qt5WL...`](https://explorer.testnet.near.org/transactions/4f4Qt5WLE6qe3HKYi3x6dzdAVJtbAmL8fDRroLMp3gzy) |
+| `submit_work`: URL plus sha256 `2cec9702...` | [`Ei5umzXx...`](https://explorer.testnet.near.org/transactions/Ei5umzXxzNNbqJyHBBqZ5PoeQeKSgc9cappeFHey8bBe) |
+| `request_judging`: OutLayer request 6808, 2.2 s, 0.0013 NEAR | [`HyacCqVG...`](https://explorer.testnet.near.org/transactions/HyacCqVGjnNivocbnRY6a56LhRcaASZtsJgTCmyqYziF) |
+
+The result reads back with `get_job {"job_id":1}`. It shows status `Paid`, median scores 8/9/8, total **85**, and `max_spread` **6**.
+
+The judges disagreed by 6 on one criterion. A plain max-min rule would have stalled this honest job as inconclusive. The majority-within-4 rule paid it.
+
+Check it yourself:
+```
+near contract call-function as-read-only verified-escrow-dev.testnet get_job json-args '{"job_id":1}' network-config testnet now
+```
+
+**Job #0 shows the failure path.** It is pinned to judge v1, which trapped on WASI's write limit (see below). Every attempt returned the job to `Submitted` with nothing paid, and OutLayer charged about 0.001 NEAR per run.
+
 ## Why it is hard to cheat
 
 | Attack | Defence | Where |
