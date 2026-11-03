@@ -17,33 +17,100 @@ fn emit(s: &str) {
 
 #[cfg(target_os = "wasi")]
 mod net {
-    use std::time::Duration;
-    use wasi_http_client::Client;
+    //! Minimal wasi:http client. Written directly against the WASI 0.2
+    //! bindings because the wasi-http-client crate writes the whole request
+    //! body in one blocking-write-and-flush call, which WASI caps at 4096
+    //! bytes: any larger POST (every model prompt) traps the component.
+    use wasi::http::outgoing_handler;
+    use wasi::http::types::{Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme};
+    use wasi::io::streams::StreamError;
+
+    /// WASI's per-call limit for blocking-write-and-flush.
+    const WRITE_CHUNK: usize = 4096;
+    const CONNECT_TIMEOUT_NS: u64 = 10_000_000_000;
+    /// Model replies are small; anything bigger is refused.
+    const MAX_MODEL_RESPONSE: usize = 256 * 1024;
+
+    fn request(
+        method: Method,
+        url: &str,
+        headers: &[(&str, String)],
+        body: Option<&[u8]>,
+        max_response: usize,
+    ) -> Result<(u16, Vec<u8>), String> {
+        let rest = url.strip_prefix("https://").ok_or("only https URLs are allowed")?;
+        let (authority, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i..]),
+            None => (rest, "/"),
+        };
+        let fields = Fields::new();
+        for (k, v) in headers {
+            fields.append(&k.to_string(), &v.as_bytes().to_vec()).map_err(|e| format!("header {k}: {e:?}"))?;
+        }
+        let req = OutgoingRequest::new(fields);
+        req.set_method(&method).map_err(|_| "set method")?;
+        req.set_scheme(Some(&Scheme::Https)).map_err(|_| "set scheme")?;
+        req.set_authority(Some(authority)).map_err(|_| "set authority")?;
+        req.set_path_with_query(Some(path)).map_err(|_| "set path")?;
+
+        let out_body = req.body().map_err(|_| "request body")?;
+        if let Some(bytes) = body {
+            let stream = out_body.write().map_err(|_| "request stream")?;
+            for chunk in bytes.chunks(WRITE_CHUNK) {
+                stream.blocking_write_and_flush(chunk).map_err(|e| format!("request write: {e:?}"))?;
+            }
+            drop(stream); // child stream must go before finishing its body
+        }
+        OutgoingBody::finish(out_body, None).map_err(|e| format!("request finish: {e:?}"))?;
+
+        let options = RequestOptions::new();
+        options.set_connect_timeout(Some(CONNECT_TIMEOUT_NS)).map_err(|_| "set timeout")?;
+        let future = outgoing_handler::handle(req, Some(options)).map_err(|e| format!("send: {e:?}"))?;
+        let response = loop {
+            match future.get() {
+                Some(r) => break r.map_err(|_| "response already taken")?.map_err(|e| format!("http: {e:?}"))?,
+                None => future.subscribe().block(),
+            }
+        };
+        let status = response.status();
+        let in_body = response.consume().map_err(|_| "response body")?;
+        let stream = in_body.stream().map_err(|_| "response stream")?;
+        let mut out = Vec::new();
+        loop {
+            match stream.blocking_read(64 * 1024) {
+                Ok(chunk) => {
+                    out.extend_from_slice(&chunk);
+                    if out.len() > max_response {
+                        return Err(format!("response larger than {max_response} bytes"));
+                    }
+                }
+                Err(StreamError::Closed) => break,
+                Err(e) => return Err(format!("response read: {e:?}")),
+            }
+        }
+        drop(stream); // child stream must go before its body
+        drop(in_body);
+        Ok((status, out))
+    }
 
     pub fn get(url: &str) -> Result<Vec<u8>, String> {
-        let resp = Client::new()
-            .get(url)
-            .header("User-Agent", "agent-escrow-judge")
-            .connect_timeout(Duration::from_secs(10))
-            .send()
-            .map_err(|e| format!("fetch failed: {e:?}"))?;
-        if !(200..300).contains(&resp.status()) {
-            return Err(format!("fetch failed: HTTP {}", resp.status()));
+        let ua = [("User-Agent", "agent-escrow-judge".to_string())];
+        // One byte over the cap is enough to know it is too big.
+        let (status, body) = request(Method::Get, url, &ua, None, super::MAX_DELIVERABLE_BYTES + 1)
+            .map_err(|e| format!("fetch failed: {e}"))?;
+        if !(200..300).contains(&status) {
+            return Err(format!("fetch failed: HTTP {status}"));
         }
-        resp.body().map_err(|e| format!("fetch body failed: {e:?}"))
+        Ok(body)
     }
 
     pub fn post_json(url: &str, key: &str, body: &str) -> Result<Vec<u8>, String> {
-        let resp = Client::new()
-            .post(url)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {key}"))
-            .connect_timeout(Duration::from_secs(10))
-            .body(body.as_bytes())
-            .send()
-            .map_err(|e| format!("model call failed: {e:?}"))?;
-        let status = resp.status();
-        let bytes = resp.body().map_err(|e| format!("model body failed: {e:?}"))?;
+        let headers = [
+            ("Content-Type", "application/json".to_string()),
+            ("Authorization", format!("Bearer {key}")),
+        ];
+        let (status, bytes) = request(Method::Post, url, &headers, Some(body.as_bytes()), MAX_MODEL_RESPONSE)
+            .map_err(|e| format!("model call failed: {e}"))?;
         if !(200..300).contains(&status) {
             return Err(format!("model HTTP {status}"));
         }

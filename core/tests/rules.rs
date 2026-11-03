@@ -432,3 +432,17 @@ fn a_tie_is_not_a_majority() {
     let tie = panel(&[("a", [8, 1, 8]), ("b", [8, 1, 8]), ("c", [8, 10, 8]), ("d", [8, 10, 8])], SHA);
     assert!(matches!(judge(&mut j, OTHER, T0, &tie), JudgeOutcome::Inconclusive(_)));
 }
+
+#[test]
+fn judge_errors_are_surfaced_and_harmless() {
+    let mut j = submitted();
+    let out = judge(&mut j, OTHER, T0, br#"{"error":"GROQ_API_KEY secret not set"}"#);
+    assert_eq!(out, JudgeOutcome::Malformed("judge error: GROQ_API_KEY secret not set".into()));
+    assert_eq!(j.status, Status::Submitted); // job untouched, can be retried
+    let wrapped = serde_json::json!({"output": "{\"error\":\"x\"}"}).to_string();
+    assert_eq!(judge(&mut j, OTHER, T0, wrapped.as_bytes()), JudgeOutcome::Malformed("judge error: x".into()));
+    let long = format!(r#"{{"error":"{}"}}"#, "a".repeat(500));
+    let JudgeOutcome::Malformed(why) = judge(&mut j, OTHER, T0, long.as_bytes()) else { panic!() };
+    assert!(why.len() <= 220);
+    assert_eq!(judge(&mut j, OTHER, T0, b"garbage"), JudgeOutcome::Malformed("unparseable judge output".into()));
+}

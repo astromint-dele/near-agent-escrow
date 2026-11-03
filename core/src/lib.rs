@@ -247,6 +247,28 @@ fn median(mut v: Vec<u32>) -> u32 {
 }
 
 /// OutLayer hands back the judge's stdout; accept it raw, JSON-quoted, or wrapped.
+/// The judge reports infrastructure problems as {"error": "..."} (possibly
+/// wrapped like a verdict). Surfaced in the Malformed reason so a failed run
+/// says why; capped so a hostile output cannot bloat the return value.
+pub fn judge_error(bytes: &[u8]) -> Option<String> {
+    fn find(v: &Value, depth: u8) -> Option<String> {
+        if depth > 3 {
+            return None;
+        }
+        match v {
+            Value::String(s) => find(&serde_json::from_str(s.trim()).ok()?, depth + 1),
+            Value::Object(m) => {
+                if let Some(Value::String(e)) = m.get("error") {
+                    return Some(e.chars().take(200).collect());
+                }
+                ["output", "result", "stdout", "data"].iter().find_map(|k| find(m.get(*k)?, depth + 1))
+            }
+            _ => None,
+        }
+    }
+    find(&serde_json::from_slice::<Value>(bytes).ok()?, 0)
+}
+
 pub fn parse_verdict(bytes: &[u8]) -> Option<Value> {
     fn unwrap(v: Value, depth: u8) -> Option<Value> {
         if depth > 3 {
@@ -455,7 +477,11 @@ pub fn finish_judging(job: &mut Job, round: u8, result: Result<&[u8], ()>, now_n
     };
     let Some(verdict) = parse_verdict(bytes) else {
         job.status = back;
-        return JudgeOutcome::Malformed("unparseable judge output".into());
+        let why = match judge_error(bytes) {
+            Some(e) => format!("judge error: {}", e),
+            None => "unparseable judge output".into(),
+        };
+        return JudgeOutcome::Malformed(why);
     };
     // The judge must always report the hash of what it fetched. A mismatch is
     // decided before (and without) the panel: the judge skips the models then.

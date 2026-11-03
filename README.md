@@ -27,7 +27,7 @@ post_job (payment + rubric locked)
 | A judge that lies about the total | The judge does **no arithmetic**: it returns raw scores, and the contract recomputes medians and totals | `core::evaluate_panel` |
 | One model fooled or noisy | Median per criterion + **strict majority within 4 points of the median**; a split panel is inconclusive (free retry), never a payout | `core::evaluate_panel` |
 | Prompt injection in the deliverable | Fenced untrusted block (fence markers in the content are neutralised), anti-manipulation system prompt, **and a reminder placed after the untrusted text** so the last instruction the model reads is ours | `judge/src/lib.rs` |
-| Steal the model API key | OutLayer secret bound to the judge WASM hash, access only via the escrow contract | OutLayer secrets |
+| Steal the model API key | OutLayer secret bound to the judge WASM hash; "direct calls only" through the escrow contract | OutLayer secrets |
 | Escrow used to pay storage | Storage reserve charged separately from the payment at `post_job` | `contract::post_job` |
 
 ## Live results (real API calls, 2026-11-03)
@@ -52,20 +52,27 @@ The whole panel took about 5 s (OutLayer limit 60 s), about 2k tokens per call. 
 - **Prompt Guard.** We tested Meta Prompt Guard 2 as an automatic injection gate. It flagged the
   injected chunk (0.92), but also flagged a chunk of the *clean* README (0.98), so it is
   **not** used as a gate. Run the probe yourself with `GUARD_PROBE=1` (see below).
+- **WASI write limit (found on testnet).** Judge v1 (`dist/escrow-judge.wasm`) trapped inside
+  OutLayer on its first model call. The `wasi-http-client` crate writes the whole request body
+  in one `blocking-write-and-flush`, which WASI 0.2 caps at 4096 bytes, and every prompt is
+  larger. The native harness never saw it because it uses a different HTTP stack. v2 has its
+  own minimal wasi:http client that writes in 4 KB chunks. The escrow handled the trap
+  safely: the job returned to `Submitted`, nothing was paid, and OutLayer charged about 0.001 NEAR.
+  v1 is kept in `dist/` because job #0 is pinned to it.
 
 ## Reproduce (do X -> see Y)
 
 Requirements: Rust (stable), the `wasm32-wasip2` target, and `cargo-near` (only for the contract).
 
-1. **Rules:** `cd core && cargo test` -> 32 tests pass. They cover the state machine,
+1. **Rules:** `cd core && cargo test` -> 33 tests pass. They cover the state machine,
    payouts, appeal window, sha mismatch, median, majority agreement, ties and
    storage.
 2. **Judge logic:** `cd judge && cargo test` -> 14 tests pass. They cover fencing, the reminder order,
    parsing of messy model replies, the 900-byte output cap and Prompt Guard chunking.
 3. **Judge WASM:** `cd judge && cargo build --release --target wasm32-wasip2`. Then
    `sha256sum target/wasm32-wasip2/release/escrow-judge.wasm` -> it should match
-   [`judge/dist/escrow-judge.wasm`](judge/dist/escrow-judge.wasm):
-   `a9a379ea39dfe8e1cfe6c9c66b35662cd9d6a1c091201c00ab5f63822ff71887`
+   [`judge/dist/escrow-judge-v2.wasm`](judge/dist/escrow-judge-v2.wasm):
+   `82ffd64680008b1c8588dac602f581b2862a0dc4d8a1d7aa471cb98d47e1228f`
    (built with rustc 1.99.1; other toolchain versions may produce a different hash, so the committed file is the one OutLayer runs).
 4. **Live panel** (free Groq key from console.groq.com):
    ```

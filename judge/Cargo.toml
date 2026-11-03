@@ -24,7 +24,8 @@ sha2 = "0.10"
 # HTTP exists only inside the OutLayer TEE runtime (WASI P2); the pure logic in
 # lib.rs is unit-tested natively.
 [target.'cfg(target_os = "wasi")'.dependencies]
-wasi-http-client = "0.2"
+# Raw WASI 0.2 bindings (see net in main.rs for why not wasi-http-client).
+wasi = "=0.13.3"
 
 # Native-only, for examples/live_panel.rs (live check against NEAR AI Cloud).
 # native-tls uses Windows SChannel, so no C toolchain is needed.
