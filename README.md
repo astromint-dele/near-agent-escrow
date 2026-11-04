@@ -51,7 +51,7 @@ near contract call-function as-read-only verified-escrow-dev.testnet get_job jso
 | A judge that lies about the total | The judge does **no arithmetic**: it returns raw scores, and the contract recomputes medians and totals | `core::evaluate_panel` |
 | One model fooled or noisy | Median per criterion + **strict majority within 4 points of the median**; a split panel is inconclusive (free retry), never a payout | `core::evaluate_panel` |
 | Prompt injection in the deliverable | Fenced untrusted block (fence markers in the content are neutralised), anti-manipulation system prompt, **and a reminder placed after the untrusted text** so the last instruction the model reads is ours | `judge/src/lib.rs` |
-| Steal the model API key | OutLayer secret bound to the judge WASM hash; "direct calls only" through the escrow contract | OutLayer secrets |
+| Steal the model API key | OutLayer secret bound to the judge WASM hash: only that exact code can read it. (Caller restriction is not enforced yet: OutLayer checks its whitelist against the *signer*, which would lock out every employer and worker. A caller rule that checks the predecessor is the planned fix.) | OutLayer secrets |
 | Escrow used to pay storage | Storage reserve charged separately from the payment at `post_job` | `contract::post_job` |
 
 ## Live results (real API calls, 2026-11-03)
